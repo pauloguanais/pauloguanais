@@ -5,6 +5,7 @@ import { User, UserRole, Project, Task, TaskTemplate, TaskStatus } from './types
 
 // Helper to get initials from name
 const getInitials = (name: string) => {
+  if (!name) return '...';
   const names = name.split(' ');
   if (names.length > 1) {
     return `${names[0][0]}${names[names.length - 1][0]}`.toUpperCase();
@@ -12,13 +13,34 @@ const getInitials = (name: string) => {
   return name.substring(0, 2).toUpperCase();
 };
 
-const App: React.FC = () => {
-  const [users, setUsers] = useState<User[]>(USERS);
-  const [projects, setProjects] = useState<Project[]>(PROJECTS);
-  const [tasks, setTasks] = useState<Task[]>(TASKS);
-  const [templates, setTemplates] = useState<TaskTemplate[]>(TEMPLATES);
+const Modal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; children: React.ReactNode }> = ({ isOpen, onClose, title, children }) => {
+  if (!isOpen) return null;
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-start pt-16" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg m-4" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center border-b p-4 dark:border-gray-700">
+          <h3 className="text-xl font-semibold dark:text-white">{title}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div className="p-4 max-h-[70vh] overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+const App: React.FC = () => {
+  const [users, setUsers] = useState<User[]>(() => JSON.parse(localStorage.getItem('guan-users') || 'null') || USERS);
+  const [projects, setProjects] = useState<Project[]>(() => JSON.parse(localStorage.getItem('guan-projects') || 'null') || PROJECTS);
+  const [tasks, setTasks] = useState<Task[]>(() => JSON.parse(localStorage.getItem('guan-tasks') || 'null') || TASKS);
+  const [templates, setTemplates] = useState<TaskTemplate[]>(() => JSON.parse(localStorage.getItem('guan-templates') || 'null') || TEMPLATES);
+
+  const [currentUser, setCurrentUser] = useState<User | null>(() => JSON.parse(sessionStorage.getItem('guan-currentUser') || 'null'));
   const [currentPage, setCurrentPage] = useState<string>('home');
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   
@@ -32,6 +54,22 @@ const App: React.FC = () => {
   const [isProjectModalOpen, setProjectModalOpen] = useState(false);
   const [isTaskModalOpen, setTaskModalOpen] = useState(false);
   const [isTemplateModalOpen, setTemplateModalOpen] = useState(false);
+  const [viewingProject, setViewingProject] = useState<Project | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<TaskTemplate | null>(null);
+
+
+  // Form states
+  const [newUser, setNewUser] = useState<Omit<User, 'id'>>({ name: '', email: '', phone: '', role: UserRole.COLLABORATOR, password: '' });
+  const [newProject, setNewProject] = useState<Omit<Project, 'id'>>({ name: '', description: '' });
+  const [newTask, setNewTask] = useState<Omit<Task, 'id' | 'status' | 'createdAt'>>({ title: '', description: '', dueDate: '', assigneeId: '', projectId: '' });
+  const [newTemplate, setNewTemplate] = useState<{name: string, tasks: Array<Omit<Task, 'id' | 'projectId' | 'createdAt' | 'status' | 'completedAt'>>}>({ name: '', tasks: [] });
+  const [templateTask, setTemplateTask] = useState({ title: '', description: '', dueDate: '1' });
+
+  // --- LOCALSTORAGE PERSISTENCE EFFECTS ---
+  useEffect(() => { localStorage.setItem('guan-users', JSON.stringify(users)); }, [users]);
+  useEffect(() => { localStorage.setItem('guan-projects', JSON.stringify(projects)); }, [projects]);
+  useEffect(() => { localStorage.setItem('guan-tasks', JSON.stringify(tasks)); }, [tasks]);
+  useEffect(() => { localStorage.setItem('guan-templates', JSON.stringify(templates)); }, [templates]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -47,6 +85,7 @@ const App: React.FC = () => {
     const user = users.find(u => u.email === email && u.password === password);
     if (user) {
       setCurrentUser(user);
+      sessionStorage.setItem('guan-currentUser', JSON.stringify(user));
       setError('');
     } else {
       setError('Credenciais inválidas. Tente "paulo@guanais.com.br" / "PauloP27" ou "bruno.costa@example.com" / "user".');
@@ -55,6 +94,7 @@ const App: React.FC = () => {
 
   const handleLogout = () => {
     setCurrentUser(null);
+    sessionStorage.removeItem('guan-currentUser');
     setEmail('');
     setPassword('');
   };
@@ -75,6 +115,107 @@ const App: React.FC = () => {
         }
         return task;
     }));
+  };
+
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    setUsers([...users, { id: crypto.randomUUID(), ...newUser }]);
+    setNewUser({ name: '', email: '', phone: '', role: UserRole.COLLABORATOR, password: '' });
+    setUserModalOpen(false);
+  };
+  
+  const handleDeleteUser = (userId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este colaborador? As tarefas atribuídas a ele ficarão sem responsável.')) return;
+    if (currentUser?.id === userId) {
+        alert("Você não pode excluir sua própria conta.");
+        return;
+    }
+    setUsers(users.filter(u => u.id !== userId));
+    setTasks(tasks.map(t => (t.assigneeId === userId ? { ...t, assigneeId: '' } : t)));
+  };
+
+  const handleCreateProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    setProjects([...projects, { id: crypto.randomUUID(), ...newProject }]);
+    setNewProject({ name: '', description: '' });
+    setProjectModalOpen(false);
+  };
+
+  const handleDeleteProject = (projectId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este projeto? Todas as tarefas associadas também serão excluídas.')) return;
+    setProjects(projects.filter(p => p.id !== projectId));
+    setTasks(tasks.filter(t => t.projectId !== projectId));
+  };
+  
+  const handleCreateTask = (e: React.FormEvent) => {
+      e.preventDefault();
+      const taskToAdd: Task = {
+        id: crypto.randomUUID(),
+        ...newTask,
+        status: TaskStatus.TODO,
+        createdAt: new Date().toISOString()
+      };
+      setTasks([...tasks, taskToAdd]);
+      setNewTask({ title: '', description: '', dueDate: '', assigneeId: '', projectId: '' });
+      setTaskModalOpen(false);
+  };
+
+  const handleDeleteTask = (taskId: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir esta tarefa?')) return;
+    setTasks(tasks.filter(t => t.id !== taskId));
+  };
+
+  const handleAddTemplateTask = () => {
+      if (!templateTask.title || !templateTask.dueDate) return;
+      setNewTemplate({
+          ...newTemplate,
+          tasks: [...newTemplate.tasks, { ...templateTask, assigneeId: '' }],
+      });
+      setTemplateTask({ title: '', description: '', dueDate: '1' });
+  };
+
+  const handleRemoveTemplateTask = (index: number) => {
+      setNewTemplate({
+          ...newTemplate,
+          tasks: newTemplate.tasks.filter((_, i) => i !== index),
+      });
+  };
+
+  const handleCloseTemplateModal = () => {
+    setTemplateModalOpen(false);
+    setEditingTemplate(null);
+    setNewTemplate({ name: '', tasks: [] });
+    setTemplateTask({ title: '', description: '', dueDate: '1' });
+  };
+
+  const handleOpenEditTemplateModal = (template: TaskTemplate) => {
+    setEditingTemplate(template);
+    setNewTemplate({ name: template.name, tasks: [...template.tasks] });
+    setTemplateModalOpen(true);
+  };
+  
+  const handleSaveTemplate = (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newTemplate.name || newTemplate.tasks.length === 0) return;
+
+      if (editingTemplate) {
+          setTemplates(templates.map(t =>
+              t.id === editingTemplate.id ? { ...t, name: newTemplate.name, tasks: newTemplate.tasks } : t
+          ));
+      } else {
+        const templateToAdd: TaskTemplate = {
+            id: crypto.randomUUID(),
+            name: newTemplate.name,
+            tasks: newTemplate.tasks,
+        };
+        setTemplates([...templates, templateToAdd]);
+      }
+      handleCloseTemplateModal();
+  };
+
+  const handleDeleteTemplate = (templateId: string) => {
+      if (!window.confirm('Tem certeza que deseja excluir este modelo?')) return;
+      setTemplates(templates.filter(t => t.id !== templateId));
   };
 
   const visibleNavItems = useMemo(() => {
@@ -116,10 +257,9 @@ const App: React.FC = () => {
           <div>
             <div className="flex justify-between items-center mb-6">
                  <h2 className="text-2xl font-semibold dark:text-white">Minhas Tarefas</h2>
-                 <button className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Nova Tarefa</button>
+                 <button onClick={() => setTaskModalOpen(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Nova Tarefa</button>
             </div>
             <div className="space-y-6">
-                {/* FIX: Correctly create an array of arrays. The previous code used the comma operator, which resulted in only the last item being processed. */}
                 {[
                   ['Atrasadas', overdueTasks], 
                   ['Para Hoje', todayTasks], 
@@ -128,7 +268,7 @@ const App: React.FC = () => {
                     <div key={title as string}>
                         <h3 className="text-lg font-medium mb-2 dark:text-gray-300">{title as string} ({taskList.length})</h3>
                         <div className="space-y-2">
-                            {taskList.map(task => (
+                            {taskList.length > 0 ? taskList.map(task => (
                                 <div key={task.id} className={`flex items-center p-3 bg-white dark:bg-gray-800 rounded-lg shadow-sm border-l-4 ${new Date(task.dueDate) < new Date() && task.status === TaskStatus.TODO ? 'border-red-500' : 'border-transparent'}`}>
                                     <button onClick={() => toggleTaskStatus(task.id)} className="mr-4">
                                         {task.status === TaskStatus.DONE ? (
@@ -143,7 +283,7 @@ const App: React.FC = () => {
                                     </div>
                                     <div className="text-sm text-gray-600 dark:text-gray-300">{users.find(u => u.id === task.assigneeId)?.name}</div>
                                 </div>
-                            ))}
+                            )) : <p className="text-sm text-gray-500 dark:text-gray-400">Nenhuma tarefa aqui.</p>}
                         </div>
                     </div>
                 ))}
@@ -155,7 +295,7 @@ const App: React.FC = () => {
           <div>
             <div className="flex justify-between items-center mb-6">
                  <h2 className="text-2xl font-semibold dark:text-white">Colaboradores</h2>
-                 <button className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Adicionar Colaborador</button>
+                 <button onClick={() => setUserModalOpen(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Adicionar Colaborador</button>
             </div>
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
                  <ul className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -167,7 +307,7 @@ const App: React.FC = () => {
                             </div>
                             <div>
                                 <button className="text-indigo-600 hover:text-indigo-900 mr-4">Editar</button>
-                                <button className="text-red-600 hover:text-red-900">Excluir</button>
+                                <button onClick={() => handleDeleteUser(user.id)} className="text-red-600 hover:text-red-900">Excluir</button>
                             </div>
                         </li>
                     ))}
@@ -180,16 +320,18 @@ const App: React.FC = () => {
           <div>
             <div className="flex justify-between items-center mb-6">
                  <h2 className="text-2xl font-semibold dark:text-white">Projetos</h2>
-                 {currentUser.role === UserRole.ADMIN && <button className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Novo Projeto</button>}
+                 {currentUser.role === UserRole.ADMIN && <button onClick={() => setProjectModalOpen(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Novo Projeto</button>}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {projects.map(project => (
-                    <div key={project.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-5">
-                         <h3 className="font-semibold text-lg dark:text-white">{project.name}</h3>
-                         <p className="text-gray-600 dark:text-gray-400 mt-2 text-sm">{project.description}</p>
+                    <div key={project.id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-5 flex flex-col justify-between">
+                        <div>
+                             <h3 className="font-semibold text-lg dark:text-white">{project.name}</h3>
+                             <p className="text-gray-600 dark:text-gray-400 mt-2 text-sm">{project.description}</p>
+                        </div>
                          <div className="mt-4 flex justify-end space-x-2">
-                            <button className="text-sm text-indigo-600 hover:underline">Ver Tarefas</button>
-                            {currentUser.role === UserRole.ADMIN && <button className="text-sm text-red-600 hover:underline">Excluir</button>}
+                            <button onClick={() => setViewingProject(project)} className="text-sm text-indigo-600 hover:underline">Ver Tarefas</button>
+                            {currentUser.role === UserRole.ADMIN && <button onClick={() => handleDeleteProject(project.id)} className="text-sm text-red-600 hover:underline">Excluir</button>}
                          </div>
                     </div>
                 ))}
@@ -201,7 +343,7 @@ const App: React.FC = () => {
             <div>
                  <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-semibold dark:text-white">Modelos de Tarefas</h2>
-                    <button className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Novo Modelo</button>
+                    <button onClick={() => setTemplateModalOpen(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Novo Modelo</button>
                 </div>
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
                     <ul className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -211,7 +353,10 @@ const App: React.FC = () => {
                                 <p className="font-medium dark:text-white">{template.name}</p>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">{template.tasks.length} tarefas</p>
                             </div>
-                            <button className="text-indigo-600 hover:text-indigo-900">Editar</button>
+                            <div>
+                                <button onClick={() => handleOpenEditTemplateModal(template)} className="text-indigo-600 hover:text-indigo-900 mr-4">Editar</button>
+                                <button onClick={() => handleDeleteTemplate(template.id)} className="text-red-600 hover:text-red-900">Excluir</button>
+                            </div>
                         </li>
                     ))}
                     </ul>
@@ -225,14 +370,16 @@ const App: React.FC = () => {
                 <h2 className="text-2xl font-semibold dark:text-white mb-6">Relatórios de Tarefas Concluídas</h2>
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow">
                     <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                        {completedTasks.map(task => (
+                        {completedTasks.length > 0 ? completedTasks.map(task => (
                              <li key={task.id} className="p-4">
                                 <p className="font-medium dark:text-white">{task.title}</p>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">
                                     Concluída por: {users.find(u => u.id === task.assigneeId)?.name || 'N/A'} em {task.completedAt ? new Date(task.completedAt).toLocaleDateString() : 'N/A'}
                                 </p>
                             </li>
-                        ))}
+                        )) : (
+                            <li className="p-4 text-center text-gray-500 dark:text-gray-400">Nenhuma tarefa concluída ainda.</li>
+                        )}
                     </ul>
                 </div>
             </div>
@@ -241,6 +388,9 @@ const App: React.FC = () => {
         return <h2>Home</h2>;
     }
   };
+  
+  const formInputStyle = "w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white";
+  const formLabelStyle = "text-sm font-medium text-gray-700 dark:text-gray-300";
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
@@ -277,7 +427,6 @@ const App: React.FC = () => {
                         </div>
                         <span className="hidden md:inline">{currentUser.name}</span>
                     </button>
-                    {/* Dropdown can be added here */}
                 </div>
                  <button onClick={handleLogout} className="text-sm text-gray-600 dark:text-gray-400 hover:underline">Sair</button>
             </div>
@@ -286,6 +435,83 @@ const App: React.FC = () => {
             {renderPage()}
         </div>
       </main>
+
+      <Modal isOpen={isTaskModalOpen} onClose={() => setTaskModalOpen(false)} title="Nova Tarefa">
+        <form onSubmit={handleCreateTask} className="space-y-4">
+           <div><label className={formLabelStyle}>Título</label><input type="text" value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} required className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Descrição</label><textarea value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Data de Vencimento</label><input type="date" value={newTask.dueDate} onChange={e => setNewTask({...newTask, dueDate: e.target.value})} required className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Responsável</label><select value={newTask.assigneeId} onChange={e => setNewTask({...newTask, assigneeId: e.target.value})} required className={formInputStyle}><option value="">Selecione...</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+           <div><label className={formLabelStyle}>Projeto</label><select value={newTask.projectId} onChange={e => setNewTask({...newTask, projectId: e.target.value})} required className={formInputStyle}><option value="">Selecione...</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+           <div className="flex justify-end pt-4"><button type="submit" className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Criar Tarefa</button></div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isUserModalOpen} onClose={() => setUserModalOpen(false)} title="Adicionar Colaborador">
+        <form onSubmit={handleCreateUser} className="space-y-4">
+           <div><label className={formLabelStyle}>Nome Completo</label><input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} required className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Email</label><input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} required className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Telefone</label><input type="tel" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Senha</label><input type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} required className={formInputStyle}/></div>
+           <div><label className={formLabelStyle}>Cargo</label><select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as UserRole})} required className={formInputStyle}><option value={UserRole.COLLABORATOR}>Colaborador</option><option value={UserRole.ADMIN}>Admin</option></select></div>
+           <div className="flex justify-end pt-4"><button type="submit" className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Adicionar</button></div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isProjectModalOpen} onClose={() => setProjectModalOpen(false)} title="Novo Projeto">
+        <form onSubmit={handleCreateProject} className="space-y-4">
+            <div><label className={formLabelStyle}>Nome do Projeto</label><input type="text" value={newProject.name} onChange={e => setNewProject({...newProject, name: e.target.value})} required className={formInputStyle}/></div>
+            <div><label className={formLabelStyle}>Descrição</label><textarea value={newProject.description} onChange={e => setNewProject({...newProject, description: e.target.value})} className={formInputStyle}/></div>
+            <div className="flex justify-end pt-4"><button type="submit" className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Criar Projeto</button></div>
+        </form>
+      </Modal>
+      
+      <Modal isOpen={isTemplateModalOpen} onClose={handleCloseTemplateModal} title={editingTemplate ? "Editar Modelo" : "Novo Modelo de Tarefas"}>
+        <form onSubmit={handleSaveTemplate} className="space-y-4">
+            <div><label className={formLabelStyle}>Nome do Modelo</label><input type="text" value={newTemplate.name} onChange={e => setNewTemplate({ ...newTemplate, name: e.target.value })} required className={formInputStyle}/></div>
+            <div className="border-t dark:border-gray-700 pt-4 mt-4">
+                <h4 className="font-medium mb-2 dark:text-white">Tarefas do Modelo</h4>
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                    {newTemplate.tasks.map((task, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 bg-gray-100 dark:bg-gray-700 rounded">
+                            <span className="text-sm">{task.title} (Vence em {task.dueDate} dias)</span>
+                            <button type="button" onClick={() => handleRemoveTemplateTask(index)} className="text-red-500 text-xs">Remover</button>
+                        </div>
+                    ))}
+                </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 border-t dark:border-gray-700 pt-4">
+                    <div><label className={formLabelStyle}>Título da Tarefa</label><input type="text" value={templateTask.title} onChange={e => setTemplateTask({...templateTask, title: e.target.value})} className={formInputStyle}/></div>
+                    <div><label className={formLabelStyle}>Descrição</label><input type="text" value={templateTask.description} onChange={e => setTemplateTask({...templateTask, description: e.target.value})} className={formInputStyle}/></div>
+                    <div><label className={formLabelStyle}>Vencimento em (dias)</label><input type="number" min="1" value={templateTask.dueDate} onChange={e => setTemplateTask({...templateTask, dueDate: e.target.value})} className={formInputStyle}/></div>
+                    <div className="self-end"><button type="button" onClick={handleAddTemplateTask} className="w-full px-4 py-2 text-sm text-white bg-gray-500 rounded-md hover:bg-gray-600">Adicionar Tarefa ao Modelo</button></div>
+                </div>
+            </div>
+            <div className="flex justify-end pt-4"><button type="submit" className="px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700">{editingTemplate ? "Salvar Alterações" : "Criar Modelo"}</button></div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={!!viewingProject} onClose={() => setViewingProject(null)} title={`Tarefas de "${viewingProject?.name}"`}>
+         <div className="space-y-3">
+            {tasks.filter(t => t.projectId === viewingProject?.id).length > 0 ? (
+                tasks.filter(t => t.projectId === viewingProject?.id).map(task => (
+                    <div key={task.id} className="flex items-center p-3 bg-gray-50 dark:bg-gray-700 rounded-lg justify-between">
+                         <div>
+                            <p className={`font-medium dark:text-white ${task.status === TaskStatus.DONE ? 'line-through' : ''}`}>{task.title}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                                Responsável: {users.find(u => u.id === task.assigneeId)?.name || 'Ninguém'} - Vence: {new Date(task.dueDate).toLocaleDateString()}
+                            </p>
+                        </div>
+                        {currentUser.role === UserRole.ADMIN && (
+                            <button onClick={() => handleDeleteTask(task.id)} className="text-xs text-red-500 hover:text-red-700">Excluir</button>
+                        )}
+                    </div>
+                ))
+            ) : (
+                <p className="text-center text-gray-500 dark:text-gray-400">Nenhuma tarefa neste projeto.</p>
+            )}
+        </div>
+      </Modal>
+
     </div>
   );
 };
