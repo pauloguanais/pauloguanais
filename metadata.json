@@ -1,0 +1,5 @@
+{
+  "name": "GUANAIS TASK",
+  "description": "Um aplicativo de gerenciamento de tarefas para equipes, permitindo a delegação, acompanhamento e geração de relatórios de tarefas e projetos. Inclui funcionalidades de login com diferentes níveis de permissão para administradores e colaboradores.",
+  "requestFramePermissions": []
+}
